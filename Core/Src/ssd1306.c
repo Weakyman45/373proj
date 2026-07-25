@@ -2,6 +2,7 @@
 #include <string.h>
 
 static I2C_HandleTypeDef *s_hi2c = NULL;
+static uint16_t s_i2c_address = SSD1306_I2C_ADDRESS;
 static uint8_t s_buffer[SSD1306_WIDTH * SSD1306_HEIGHT / 8U];
 
 static const uint8_t s_digits[10][5] = {
@@ -49,7 +50,7 @@ static const uint8_t s_uppercase[26][5] = {
 static bool write_command(uint8_t command)
 {
     uint8_t packet[2] = {0x00U, command};
-    return HAL_I2C_Master_Transmit(s_hi2c, SSD1306_I2C_ADDRESS,
+    return HAL_I2C_Master_Transmit(s_hi2c, s_i2c_address,
                                     packet, sizeof(packet), 100U) == HAL_OK;
 }
 
@@ -95,7 +96,25 @@ bool SSD1306_Init(I2C_HandleTypeDef *hi2c)
     s_hi2c = hi2c;
     HAL_Delay(100U);
 
-    if (HAL_I2C_IsDeviceReady(s_hi2c, SSD1306_I2C_ADDRESS, 3U, 100U) != HAL_OK) {
+    const uint16_t candidate_addresses[] = {
+        SSD1306_I2C_ADDRESS,
+        (0x3CU << 1),
+        (0x3DU << 1)
+    };
+
+    bool device_found = false;
+    for (uint32_t i = 0U; i < (sizeof(candidate_addresses) / sizeof(candidate_addresses[0])); ++i) {
+        if (i > 0U && candidate_addresses[i] == candidate_addresses[0]) {
+            continue;
+        }
+        if (HAL_I2C_IsDeviceReady(s_hi2c, candidate_addresses[i], 3U, 100U) == HAL_OK) {
+            s_i2c_address = candidate_addresses[i];
+            device_found = true;
+            break;
+        }
+    }
+
+    if (!device_found) {
         return false;
     }
 
@@ -105,6 +124,7 @@ bool SSD1306_Init(I2C_HandleTypeDef *hi2c)
         0xA8, 0x3F, /* multiplex 1/64 */
         0xD3, 0x00, /* display offset */
         0x40,       /* start line 0 */
+        0xAD, 0x8B, /* SH1106 internal DC-DC on; ignored by SSD1306 */
         0x8D, 0x14, /* charge pump on */
         0x20, 0x02, /* page addressing mode */
         0xA1,       /* segment remap */
@@ -204,13 +224,13 @@ bool SSD1306_UpdateScreen(void)
 
     for (uint8_t page = 0U; page < 8U; ++page) {
         if (!write_command((uint8_t)(0xB0U + page)) ||
-            !write_command(0x00U) ||
+            !write_command(0x02U) ||
             !write_command(0x10U)) {
             return false;
         }
 
         memcpy(&packet[1], &s_buffer[(uint16_t)page * SSD1306_WIDTH], SSD1306_WIDTH);
-        if (HAL_I2C_Master_Transmit(s_hi2c, SSD1306_I2C_ADDRESS,
+        if (HAL_I2C_Master_Transmit(s_hi2c, s_i2c_address,
                                     packet, sizeof(packet), 150U) != HAL_OK) {
             return false;
         }

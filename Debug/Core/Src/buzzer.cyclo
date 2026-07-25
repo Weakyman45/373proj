@@ -1,0 +1,9 @@
+../Core/Src/buzzer.c:13:13:output_set	2
+../Core/Src/buzzer.c:21:6:Buzzer_Init	1
+../Core/Src/buzzer.c:30:6:Buzzer_SetMuted	2
+../Core/Src/buzzer.c:38:6:Buzzer_IsMuted	1
+../Core/Src/buzzer.c:43:6:Buzzer_Start	1
+../Core/Src/buzzer.c:48:6:Buzzer_StartTimed	5
+../Core/Src/buzzer.c:61:6:Buzzer_IsActive	1
+../Core/Src/buzzer.c:66:6:Buzzer_Stop	1
+../Core/Src/buzzer.c:72:6:Buzzer_Task	5

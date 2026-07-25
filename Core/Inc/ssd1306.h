@@ -9,7 +9,7 @@
 #define SSD1306_HEIGHT  64U
 
 #ifndef SSD1306_I2C_ADDRESS
-#define SSD1306_I2C_ADDRESS (0x3CU << 1)
+#define SSD1306_I2C_ADDRESS (0x3DU << 1) /* 8-bit write address: 0x7A */
 #endif
 
 bool SSD1306_Init(I2C_HandleTypeDef *hi2c);

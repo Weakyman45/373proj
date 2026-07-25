@@ -7,6 +7,8 @@ static bool s_muted = false;
 static bool s_output_on = false;
 static uint8_t s_pulses_remaining = 0U;
 static uint32_t s_next_change_ms = 0U;
+static uint32_t s_on_time_ms = 150U;
+static uint32_t s_off_time_ms = 150U;
 
 static void output_set(bool on)
 {
@@ -40,13 +42,25 @@ bool Buzzer_IsMuted(void)
 
 void Buzzer_Start(uint8_t pulse_count)
 {
+    Buzzer_StartTimed(pulse_count, 150U, 150U);
+}
+
+void Buzzer_StartTimed(uint8_t pulse_count, uint32_t on_time_ms, uint32_t off_time_ms)
+{
     if (s_muted || pulse_count == 0U || s_port == NULL) {
         return;
     }
 
+    s_on_time_ms = (on_time_ms == 0U) ? 1U : on_time_ms;
+    s_off_time_ms = off_time_ms;
     s_pulses_remaining = pulse_count;
     output_set(true);
-    s_next_change_ms = HAL_GetTick() + 150U;
+    s_next_change_ms = HAL_GetTick() + s_on_time_ms;
+}
+
+bool Buzzer_IsActive(void)
+{
+    return s_pulses_remaining != 0U;
 }
 
 void Buzzer_Stop(void)
@@ -68,13 +82,13 @@ void Buzzer_Task(void)
 
     if (s_output_on) {
         output_set(false);
-        s_next_change_ms = now + 150U;
-    } else {
         --s_pulses_remaining;
         if (s_pulses_remaining == 0U) {
             return;
         }
+        s_next_change_ms = now + s_off_time_ms;
+    } else {
         output_set(true);
-        s_next_change_ms = now + 150U;
+        s_next_change_ms = now + s_on_time_ms;
     }
 }

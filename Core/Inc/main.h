@@ -57,30 +57,20 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
-#define LCD_DB0_Pin GPIO_PIN_0
-#define LCD_DB0_GPIO_Port GPIOA
-#define LCD_DB1_Pin GPIO_PIN_1
-#define LCD_DB1_GPIO_Port GPIOA
-#define LCD_DB2_Pin GPIO_PIN_2
-#define LCD_DB2_GPIO_Port GPIOA
-#define LCD_DB3_Pin GPIO_PIN_3
-#define LCD_DB3_GPIO_Port GPIOA
-#define LCD_DB4_Pin GPIO_PIN_4
-#define LCD_DB4_GPIO_Port GPIOA
-#define LCD_DB5_Pin GPIO_PIN_5
-#define LCD_DB5_GPIO_Port GPIOA
-#define LCD_DB6_Pin GPIO_PIN_6
-#define LCD_DB6_GPIO_Port GPIOA
-#define LCD_DB7_Pin GPIO_PIN_7
-#define LCD_DB7_GPIO_Port GPIOA
-#define LCD_RS_Pin GPIO_PIN_12
-#define LCD_RS_GPIO_Port GPIOB
-#define LCD_RW_Pin GPIO_PIN_13
-#define LCD_RW_GPIO_Port GPIOB
-#define LCD_E_Pin GPIO_PIN_14
-#define LCD_E_GPIO_Port GPIOB
-#define BUZZER_Pin GPIO_PIN_8
+#define BTN_MUTE_Pin GPIO_PIN_8
+#define BTN_MUTE_GPIO_Port GPIOA
+#define BTN_MUTE_EXTI_IRQn EXTI9_5_IRQn
+#define BUZZER_Pin GPIO_PIN_11
 #define BUZZER_GPIO_Port GPIOA
+#define BTN_START_Pin GPIO_PIN_5
+#define BTN_START_GPIO_Port GPIOB
+#define BTN_START_EXTI_IRQn EXTI9_5_IRQn
+#define BTN_MODE_Pin GPIO_PIN_13
+#define BTN_MODE_GPIO_Port GPIOB
+#define BTN_MODE_EXTI_IRQn EXTI15_10_IRQn
+#define BTN_RESET_Pin GPIO_PIN_15
+#define BTN_RESET_GPIO_Port GPIOB
+#define BTN_RESET_EXTI_IRQn EXTI15_10_IRQn
 
 /* USER CODE BEGIN Private defines */
 
