@@ -1,0 +1,28 @@
+#ifndef STUDYMATE_CONFIG_H
+#define STUDYMATE_CONFIG_H
+
+/* 1: presentation timings; 0: real Pomodoro timings. */
+#define STUDYMATE_DEMO_MODE 1
+
+#if STUDYMATE_DEMO_MODE
+#define STUDYMATE_FOCUS_SECONDS        25U
+#define STUDYMATE_SHORT_BREAK_SECONDS  10U
+#define STUDYMATE_LONG_BREAK_SECONDS   15U
+#else
+#define STUDYMATE_FOCUS_SECONDS        (25U * 60U)
+#define STUDYMATE_SHORT_BREAK_SECONDS  (5U  * 60U)
+#define STUDYMATE_LONG_BREAK_SECONDS   (15U * 60U)
+#endif
+
+#define STUDYMATE_SENSOR_PERIOD_SECONDS 2U
+#define STUDYMATE_BUTTON_DEBOUNCE_MS    180U
+
+#define STUDYMATE_TEMP_LOW_C            18.0f
+#define STUDYMATE_TEMP_HIGH_C           28.0f
+#define STUDYMATE_HUMIDITY_LOW_PERCENT  35.0f
+#define STUDYMATE_HUMIDITY_HIGH_PERCENT 70.0f
+
+/* For a very easy humidity-warning demo, temporarily use 55.0f. */
+/* #define STUDYMATE_HUMIDITY_HIGH_PERCENT 55.0f */
+
+#endif /* STUDYMATE_CONFIG_H */
