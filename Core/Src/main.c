@@ -31,12 +31,13 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define BUZZER_TEST_DURATION_MS 1000U
-#define BUZZER_TEST_GAP_MS      1000U
+#define BUTTON_TEST_DEBOUNCE_MS 30U
+#define BUTTON_TEST_POLL_MS      5U
+#define BUTTON_TEST_BEEP_MS     80U
+#define BUTTON_TEST_GPIO_PORT GPIOA
+#define BUTTON_TEST_PIN       GPIO_PIN_8
 #define BUZZER_TEST_GPIO_PORT GPIOA
-#define BUZZER_TEST_PIN       GPIO_PIN_8
-#define OLED_TEST_ACTIVE      1U
-#define OLED_TEST_HOLD_MS     1200U
+#define BUZZER_TEST_PIN       GPIO_PIN_11
 
 /* USER CODE END PD */
 
@@ -78,7 +79,7 @@ static inline void Buzzer_Off(void)
   HAL_GPIO_WritePin(BUZZER_TEST_GPIO_PORT, BUZZER_TEST_PIN, GPIO_PIN_RESET);
 }
 
-static void Buzzer_TestPinInit(void)
+static void Button_TestPinsInit(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
 
@@ -90,6 +91,11 @@ static void Buzzer_TestPinInit(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(BUZZER_TEST_GPIO_PORT, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = BUTTON_TEST_PIN;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(BUTTON_TEST_GPIO_PORT, &GPIO_InitStruct);
 }
 
 static void DWT_DelayMs(uint32_t duration_ms)
@@ -127,33 +133,43 @@ static void OLED_DrawBorder(void)
   }
 }
 
-static bool OLED_ShowTextTest(void)
+static void FormatPressCount(char text[12], uint32_t count)
 {
-  SSD1306_Fill(false);
-  OLED_DrawBorder();
-  SSD1306_DrawString(10U, 6U, "OLED TEST", 2U);
-  SSD1306_DrawString(37U, 27U, "SSD1306", 1U);
-  SSD1306_DrawString(34U, 39U, "I2C 0X3C", 1U);
-  SSD1306_DrawString(31U, 51U, "DISPLAY OK", 1U);
-  return SSD1306_UpdateScreen();
-}
+  static const char prefix[] = "COUNT ";
 
-static bool OLED_ShowPixelTest(void)
-{
-  SSD1306_Fill(false);
-
-  for (uint8_t y = 0U; y < SSD1306_HEIGHT; ++y)
+  for (uint8_t i = 0U; i < 6U; ++i)
   {
-    for (uint8_t x = 0U; x < SSD1306_WIDTH; ++x)
-    {
-      if ((((x / 8U) + (y / 8U)) & 1U) == 0U)
-      {
-        SSD1306_DrawPixel(x, y, true);
-      }
-    }
+    text[i] = prefix[i];
   }
 
-  return SSD1306_UpdateScreen();
+  count %= 100000U;
+  for (int8_t i = 10; i >= 6; --i)
+  {
+    text[i] = (char)('0' + (count % 10U));
+    count /= 10U;
+  }
+  text[11] = '\0';
+}
+
+static bool OLED_ShowButtonTest(bool pressed, uint32_t press_count)
+{
+  char count_text[12];
+
+  FormatPressCount(count_text, press_count);
+  SSD1306_Fill(false);
+  OLED_DrawBorder();
+  SSD1306_DrawString(22U, 4U, "K4 BUTTON TEST", 1U);
+  SSD1306_DrawString(16U, 16U, "PA8 INPUT PULLUP", 1U);
+  SSD1306_DrawString(31U, 28U, "PA11 BUZZER", 1U);
+  SSD1306_DrawString(22U, 40U,
+                     pressed ? "STATE PRESSED" : "STATE RELEASED", 1U);
+  SSD1306_DrawString(31U, 52U, count_text, 1U);
+
+  if (!SSD1306_UpdateScreen())
+  {
+    return false;
+  }
+  return SSD1306_SetInvert(pressed);
 }
 
 /* USER CODE END 0 */
@@ -194,20 +210,20 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
-  Buzzer_TestPinInit();
-
-  /* Keep the proven buzzer test available without changing its behavior. */
-  if (OLED_TEST_ACTIVE == 0U)
-  {
-    __disable_irq();
-    while (1)
-    {
-      Buzzer_Beep(BUZZER_TEST_DURATION_MS);
-      DWT_DelayMs(BUZZER_TEST_GAP_MS);
-    }
-  }
-
+  Button_TestPinsInit();
   MX_I2C1_Init();
+
+  bool stable_pressed =
+      HAL_GPIO_ReadPin(BUTTON_TEST_GPIO_PORT, BUTTON_TEST_PIN) == GPIO_PIN_RESET;
+  bool candidate_pressed = stable_pressed;
+  uint32_t candidate_since_ms = HAL_GetTick();
+  uint32_t press_count = 0U;
+
+  while (!SSD1306_Init(&hi2c1))
+  {
+    HAL_Delay(500U);
+  }
+  (void)OLED_ShowButtonTest(stable_pressed, press_count);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -217,42 +233,29 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if (!SSD1306_Init(&hi2c1))
+    const uint32_t now = HAL_GetTick();
+    const bool raw_pressed =
+        HAL_GPIO_ReadPin(BUTTON_TEST_GPIO_PORT, BUTTON_TEST_PIN) == GPIO_PIN_RESET;
+
+    if (raw_pressed != candidate_pressed)
     {
-      HAL_Delay(500U);
-      continue;
+      candidate_pressed = raw_pressed;
+      candidate_since_ms = now;
     }
 
-    while (OLED_ShowTextTest())
+    if (candidate_pressed != stable_pressed &&
+        (uint32_t)(now - candidate_since_ms) >= BUTTON_TEST_DEBOUNCE_MS)
     {
-      /* A5 lights every pixel without depending on display RAM addressing. */
-      if (!SSD1306_SetEntireDisplay(true))
+      stable_pressed = candidate_pressed;
+      if (stable_pressed)
       {
-        break;
+        ++press_count;
+        Buzzer_Beep(BUTTON_TEST_BEEP_MS);
       }
-      HAL_Delay(OLED_TEST_HOLD_MS);
-
-      if (!SSD1306_SetEntireDisplay(false))
-      {
-        break;
-      }
-      HAL_Delay(OLED_TEST_HOLD_MS);
-
-      if (!SSD1306_SetInvert(true))
-      {
-        break;
-      }
-      HAL_Delay(OLED_TEST_HOLD_MS / 2U);
-
-      if (!SSD1306_SetInvert(false) || !OLED_ShowPixelTest())
-      {
-        break;
-      }
-      HAL_Delay(OLED_TEST_HOLD_MS);
+      (void)OLED_ShowButtonTest(stable_pressed, press_count);
     }
 
-    (void)SSD1306_SetInvert(false);
-    HAL_Delay(500U);
+    HAL_Delay(BUTTON_TEST_POLL_MS);
   }
 
   /* USER CODE END 3 */
