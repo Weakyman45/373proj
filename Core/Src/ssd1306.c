@@ -1,9 +1,18 @@
 #include "ssd1306.h"
 #include <string.h>
 
-static I2C_HandleTypeDef *s_hi2c = NULL;
-static uint16_t s_i2c_address = SSD1306_I2C_ADDRESS;
+#define SSD1306_SCL_GPIO_PORT GPIOB
+#define SSD1306_SCL_PIN       GPIO_PIN_6
+#define SSD1306_SDA_GPIO_PORT GPIOB
+#define SSD1306_SDA_PIN       GPIO_PIN_7
+
+static bool s_bus_ready = false;
 static uint8_t s_buffer[SSD1306_WIDTH * SSD1306_HEIGHT / 8U];
+
+volatile uint8_t g_ssd1306_bus_idle_high = 0U;
+volatile uint8_t g_ssd1306_address_acknowledged = 0U;
+volatile uint8_t g_ssd1306_ack_0x78 = 0U;
+volatile uint8_t g_ssd1306_ack_0x7a = 0U;
 
 static const uint8_t s_digits[10][5] = {
     {0x3E, 0x51, 0x49, 0x45, 0x3E}, /* 0 */
@@ -47,11 +56,105 @@ static const uint8_t s_uppercase[26][5] = {
     {0x61, 0x51, 0x49, 0x45, 0x43}  /* Z */
 };
 
+static void i2c_delay(void)
+{
+    volatile uint8_t count = 3U;
+    while (count-- > 0U) {
+        __NOP();
+    }
+}
+
+static void i2c_set_scl(GPIO_PinState state)
+{
+    HAL_GPIO_WritePin(SSD1306_SCL_GPIO_PORT, SSD1306_SCL_PIN, state);
+}
+
+static void i2c_set_sda(GPIO_PinState state)
+{
+    HAL_GPIO_WritePin(SSD1306_SDA_GPIO_PORT, SSD1306_SDA_PIN, state);
+}
+
+static void i2c_start(void)
+{
+    i2c_set_sda(GPIO_PIN_SET);
+    i2c_set_scl(GPIO_PIN_SET);
+    i2c_delay();
+    i2c_set_sda(GPIO_PIN_RESET);
+    i2c_delay();
+    i2c_set_scl(GPIO_PIN_RESET);
+    i2c_delay();
+}
+
+static void i2c_stop(void)
+{
+    i2c_set_sda(GPIO_PIN_RESET);
+    i2c_set_scl(GPIO_PIN_SET);
+    i2c_delay();
+    i2c_set_sda(GPIO_PIN_SET);
+    i2c_delay();
+}
+
+static void i2c_send_byte(uint8_t value)
+{
+    for (uint8_t bit = 0U; bit < 8U; ++bit) {
+        i2c_set_sda((value & 0x80U) != 0U ? GPIO_PIN_SET : GPIO_PIN_RESET);
+        i2c_delay();
+        i2c_set_scl(GPIO_PIN_SET);
+        i2c_delay();
+        i2c_set_scl(GPIO_PIN_RESET);
+        value <<= 1U;
+    }
+}
+
+/* Observe ACK for diagnosis, but keep the tutorial's no-abort behavior. */
+static bool i2c_clock_ack(void)
+{
+    bool acknowledged;
+
+    i2c_set_sda(GPIO_PIN_SET);
+    i2c_delay();
+    i2c_set_scl(GPIO_PIN_SET);
+    i2c_delay();
+    acknowledged = HAL_GPIO_ReadPin(SSD1306_SDA_GPIO_PORT,
+                                    SSD1306_SDA_PIN) == GPIO_PIN_RESET;
+    i2c_set_scl(GPIO_PIN_RESET);
+    i2c_delay();
+    return acknowledged;
+}
+
+static void i2c_send_address(void)
+{
+    i2c_send_byte((uint8_t)SSD1306_I2C_ADDRESS);
+    if (i2c_clock_ack()) {
+        g_ssd1306_address_acknowledged = 1U;
+    }
+}
+
+static bool i2c_probe(uint8_t write_address)
+{
+    bool acknowledged;
+
+    i2c_start();
+    i2c_send_byte(write_address);
+    acknowledged = i2c_clock_ack();
+    i2c_stop();
+    return acknowledged;
+}
+
 static bool write_command(uint8_t command)
 {
-    uint8_t packet[2] = {0x00U, command};
-    return HAL_I2C_Master_Transmit(s_hi2c, s_i2c_address,
-                                    packet, sizeof(packet), 100U) == HAL_OK;
+    if (!s_bus_ready) {
+        return false;
+    }
+
+    i2c_start();
+    i2c_send_address();
+    i2c_send_byte(0x00U);
+    (void)i2c_clock_ack();
+    i2c_send_byte(command);
+    (void)i2c_clock_ack();
+    i2c_stop();
+    return true;
 }
 
 static void get_glyph(char ch, uint8_t glyph[5])
@@ -89,54 +192,45 @@ static void get_glyph(char ch, uint8_t glyph[5])
 
 bool SSD1306_Init(I2C_HandleTypeDef *hi2c)
 {
-    if (hi2c == NULL) {
-        return false;
-    }
+    GPIO_InitTypeDef gpio = {0};
+    (void)hi2c;
 
-    s_hi2c = hi2c;
-    HAL_Delay(100U);
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+    gpio.Pin = SSD1306_SCL_PIN | SSD1306_SDA_PIN;
+    gpio.Mode = GPIO_MODE_OUTPUT_OD;
+    gpio.Pull = GPIO_NOPULL;
+    gpio.Speed = GPIO_SPEED_FREQ_HIGH;
+    HAL_GPIO_Init(GPIOB, &gpio);
 
-    const uint16_t candidate_addresses[] = {
-        SSD1306_I2C_ADDRESS,
-        (0x3CU << 1),
-        (0x3DU << 1)
-    };
+    i2c_set_scl(GPIO_PIN_SET);
+    i2c_set_sda(GPIO_PIN_SET);
+    s_bus_ready = true;
+    HAL_Delay(200U);
+    g_ssd1306_bus_idle_high =
+        (HAL_GPIO_ReadPin(SSD1306_SCL_GPIO_PORT, SSD1306_SCL_PIN) == GPIO_PIN_SET &&
+         HAL_GPIO_ReadPin(SSD1306_SDA_GPIO_PORT, SSD1306_SDA_PIN) == GPIO_PIN_SET) ? 1U : 0U;
+    g_ssd1306_address_acknowledged = 0U;
+    g_ssd1306_ack_0x78 = i2c_probe(0x78U) ? 1U : 0U;
+    g_ssd1306_ack_0x7a = i2c_probe(0x7AU) ? 1U : 0U;
 
-    bool device_found = false;
-    for (uint32_t i = 0U; i < (sizeof(candidate_addresses) / sizeof(candidate_addresses[0])); ++i) {
-        if (i > 0U && candidate_addresses[i] == candidate_addresses[0]) {
-            continue;
-        }
-        if (HAL_I2C_IsDeviceReady(s_hi2c, candidate_addresses[i], 3U, 100U) == HAL_OK) {
-            s_i2c_address = candidate_addresses[i];
-            device_found = true;
-            break;
-        }
-    }
-
-    if (!device_found) {
-        return false;
-    }
-
+    /* SSD1306 setup from the supplied STM32F103C8T6 IIC tutorial. */
     const uint8_t sequence[] = {
         0xAE,       /* display off */
-        0xD5, 0x80, /* clock divide */
-        0xA8, 0x3F, /* multiplex 1/64 */
-        0xD3, 0x00, /* display offset */
+        0x00,       /* low column address */
+        0x10,       /* high column address */
         0x40,       /* start line 0 */
-        0xAD, 0x8B, /* SH1106 internal DC-DC on; ignored by SSD1306 */
-        0x8D, 0x14, /* charge pump on */
-        0x20, 0x02, /* page addressing mode */
+        0x81, 0xCF, /* contrast */
         0xA1,       /* segment remap */
         0xC8,       /* COM scan direction remapped */
-        0xDA, 0x12, /* COM pins */
-        0x81, 0xCF, /* contrast */
-        0xD9, 0xF1, /* pre-charge */
-        0xDB, 0x40, /* VCOM detect */
-        0xA4,       /* display follows RAM */
         0xA6,       /* normal display */
-        0x2E,       /* scroll off */
-        0xAF        /* display on */
+        0xA8, 0x3F, /* multiplex 1/64 */
+        0xD3, 0x00, /* display offset */
+        0xD5, 0x80, /* clock divide */
+        0xD9, 0xF1, /* pre-charge */
+        0xDA, 0x12, /* COM pins */
+        0xDB, 0x30, /* VCOM deselect level */
+        0x20, 0x02, /* page addressing mode */
+        0x8D, 0x14  /* charge pump on */
     };
 
     for (uint32_t i = 0U; i < sizeof(sequence); ++i) {
@@ -146,7 +240,11 @@ bool SSD1306_Init(I2C_HandleTypeDef *hi2c)
     }
 
     SSD1306_Fill(false);
-    return SSD1306_UpdateScreen();
+    if (!SSD1306_UpdateScreen()) {
+        return false;
+    }
+
+    return write_command(0xAFU);
 }
 
 void SSD1306_Fill(bool on)
@@ -215,25 +313,28 @@ void SSD1306_DrawString(uint8_t x, uint8_t y, const char *text, uint8_t scale)
 
 bool SSD1306_UpdateScreen(void)
 {
-    if (s_hi2c == NULL) {
+    if (!s_bus_ready) {
         return false;
     }
 
-    uint8_t packet[SSD1306_WIDTH + 1U];
-    packet[0] = 0x40U;
-
     for (uint8_t page = 0U; page < 8U; ++page) {
         if (!write_command((uint8_t)(0xB0U + page)) ||
-            !write_command(0x02U) ||
+            !write_command(0x00U) ||
             !write_command(0x10U)) {
             return false;
         }
 
-        memcpy(&packet[1], &s_buffer[(uint16_t)page * SSD1306_WIDTH], SSD1306_WIDTH);
-        if (HAL_I2C_Master_Transmit(s_hi2c, s_i2c_address,
-                                    packet, sizeof(packet), 150U) != HAL_OK) {
-            return false;
+        i2c_start();
+        i2c_send_address();
+        i2c_send_byte(0x40U);
+        (void)i2c_clock_ack();
+
+        for (uint8_t column = 0U; column < SSD1306_WIDTH; ++column) {
+            i2c_send_byte(s_buffer[(uint16_t)page * SSD1306_WIDTH + column]);
+            (void)i2c_clock_ack();
         }
+
+        i2c_stop();
     }
 
     return true;
@@ -241,8 +342,16 @@ bool SSD1306_UpdateScreen(void)
 
 bool SSD1306_SetInvert(bool invert)
 {
-    if (s_hi2c == NULL) {
+    if (!s_bus_ready) {
         return false;
     }
     return write_command(invert ? 0xA7U : 0xA6U);
+}
+
+bool SSD1306_SetEntireDisplay(bool on)
+{
+    if (!s_bus_ready) {
+        return false;
+    }
+    return write_command(on ? 0xA5U : 0xA4U);
 }

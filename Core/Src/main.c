@@ -21,6 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "ssd1306.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -34,6 +35,8 @@
 #define BUZZER_TEST_GAP_MS      1000U
 #define BUZZER_TEST_GPIO_PORT GPIOA
 #define BUZZER_TEST_PIN       GPIO_PIN_8
+#define OLED_TEST_ACTIVE      1U
+#define OLED_TEST_HOLD_MS     1200U
 
 /* USER CODE END PD */
 
@@ -109,6 +112,50 @@ static void Buzzer_Beep(uint32_t duration_ms)
   Buzzer_Off();
 }
 
+static void OLED_DrawBorder(void)
+{
+  for (uint8_t x = 0U; x < SSD1306_WIDTH; ++x)
+  {
+    SSD1306_DrawPixel(x, 0U, true);
+    SSD1306_DrawPixel(x, SSD1306_HEIGHT - 1U, true);
+  }
+
+  for (uint8_t y = 0U; y < SSD1306_HEIGHT; ++y)
+  {
+    SSD1306_DrawPixel(0U, y, true);
+    SSD1306_DrawPixel(SSD1306_WIDTH - 1U, y, true);
+  }
+}
+
+static bool OLED_ShowTextTest(void)
+{
+  SSD1306_Fill(false);
+  OLED_DrawBorder();
+  SSD1306_DrawString(10U, 6U, "OLED TEST", 2U);
+  SSD1306_DrawString(37U, 27U, "SSD1306", 1U);
+  SSD1306_DrawString(34U, 39U, "I2C 0X3C", 1U);
+  SSD1306_DrawString(31U, 51U, "DISPLAY OK", 1U);
+  return SSD1306_UpdateScreen();
+}
+
+static bool OLED_ShowPixelTest(void)
+{
+  SSD1306_Fill(false);
+
+  for (uint8_t y = 0U; y < SSD1306_HEIGHT; ++y)
+  {
+    for (uint8_t x = 0U; x < SSD1306_WIDTH; ++x)
+    {
+      if ((((x / 8U) + (y / 8U)) & 1U) == 0U)
+      {
+        SSD1306_DrawPixel(x, y, true);
+      }
+    }
+  }
+
+  return SSD1306_UpdateScreen();
+}
+
 /* USER CODE END 0 */
 
 /**
@@ -119,6 +166,12 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+
+  /* Always take exception vectors from this application's Flash image.
+     This also makes debug launches independent of the BOOT pin mapping. */
+  SCB->VTOR = FLASH_BASE;
+  __DSB();
+  __ISB();
 
   /* USER CODE END 1 */
 
@@ -142,7 +195,19 @@ int main(void)
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
   Buzzer_TestPinInit();
-  __disable_irq();
+
+  /* Keep the proven buzzer test available without changing its behavior. */
+  if (OLED_TEST_ACTIVE == 0U)
+  {
+    __disable_irq();
+    while (1)
+    {
+      Buzzer_Beep(BUZZER_TEST_DURATION_MS);
+      DWT_DelayMs(BUZZER_TEST_GAP_MS);
+    }
+  }
+
+  MX_I2C1_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -152,8 +217,42 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    Buzzer_Beep(BUZZER_TEST_DURATION_MS);
-    DWT_DelayMs(BUZZER_TEST_GAP_MS);
+    if (!SSD1306_Init(&hi2c1))
+    {
+      HAL_Delay(500U);
+      continue;
+    }
+
+    while (OLED_ShowTextTest())
+    {
+      /* A5 lights every pixel without depending on display RAM addressing. */
+      if (!SSD1306_SetEntireDisplay(true))
+      {
+        break;
+      }
+      HAL_Delay(OLED_TEST_HOLD_MS);
+
+      if (!SSD1306_SetEntireDisplay(false))
+      {
+        break;
+      }
+      HAL_Delay(OLED_TEST_HOLD_MS);
+
+      if (!SSD1306_SetInvert(true))
+      {
+        break;
+      }
+      HAL_Delay(OLED_TEST_HOLD_MS / 2U);
+
+      if (!SSD1306_SetInvert(false) || !OLED_ShowPixelTest())
+      {
+        break;
+      }
+      HAL_Delay(OLED_TEST_HOLD_MS);
+    }
+
+    (void)SSD1306_SetInvert(false);
+    HAL_Delay(500U);
   }
 
   /* USER CODE END 3 */
