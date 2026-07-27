@@ -21,7 +21,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "ssd1306.h"
+#include "studymate_app.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -31,13 +31,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define BUTTON_TEST_DEBOUNCE_MS 30U
-#define BUTTON_TEST_POLL_MS      5U
-#define BUTTON_TEST_BEEP_MS     80U
-#define BUTTON_TEST_GPIO_PORT GPIOA
-#define BUTTON_TEST_PIN       GPIO_PIN_8
-#define BUZZER_TEST_GPIO_PORT GPIOA
-#define BUZZER_TEST_PIN       GPIO_PIN_11
 
 /* USER CODE END PD */
 
@@ -69,108 +62,6 @@ void MX_USART1_UART_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-static inline void Buzzer_On(void)
-{
-  HAL_GPIO_WritePin(BUZZER_TEST_GPIO_PORT, BUZZER_TEST_PIN, GPIO_PIN_SET);
-}
-
-static inline void Buzzer_Off(void)
-{
-  HAL_GPIO_WritePin(BUZZER_TEST_GPIO_PORT, BUZZER_TEST_PIN, GPIO_PIN_RESET);
-}
-
-static void Button_TestPinsInit(void)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-
-  __HAL_RCC_GPIOA_CLK_ENABLE();
-  HAL_GPIO_WritePin(BUZZER_TEST_GPIO_PORT, BUZZER_TEST_PIN, GPIO_PIN_RESET);
-
-  GPIO_InitStruct.Pin = BUZZER_TEST_PIN;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(BUZZER_TEST_GPIO_PORT, &GPIO_InitStruct);
-
-  GPIO_InitStruct.Pin = BUTTON_TEST_PIN;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(BUTTON_TEST_GPIO_PORT, &GPIO_InitStruct);
-}
-
-static void DWT_DelayMs(uint32_t duration_ms)
-{
-  const uint32_t cycles = (SystemCoreClock / 1000U) * duration_ms;
-
-  CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
-  DWT->CYCCNT = 0U;
-  DWT->CTRL |= DWT_CTRL_CYCCNTENA_Msk;
-
-  while (DWT->CYCCNT < cycles)
-  {
-  }
-}
-
-static void Buzzer_Beep(uint32_t duration_ms)
-{
-  Buzzer_On();
-  DWT_DelayMs(duration_ms);
-  Buzzer_Off();
-}
-
-static void OLED_DrawBorder(void)
-{
-  for (uint8_t x = 0U; x < SSD1306_WIDTH; ++x)
-  {
-    SSD1306_DrawPixel(x, 0U, true);
-    SSD1306_DrawPixel(x, SSD1306_HEIGHT - 1U, true);
-  }
-
-  for (uint8_t y = 0U; y < SSD1306_HEIGHT; ++y)
-  {
-    SSD1306_DrawPixel(0U, y, true);
-    SSD1306_DrawPixel(SSD1306_WIDTH - 1U, y, true);
-  }
-}
-
-static void FormatPressCount(char text[12], uint32_t count)
-{
-  static const char prefix[] = "COUNT ";
-
-  for (uint8_t i = 0U; i < 6U; ++i)
-  {
-    text[i] = prefix[i];
-  }
-
-  count %= 100000U;
-  for (int8_t i = 10; i >= 6; --i)
-  {
-    text[i] = (char)('0' + (count % 10U));
-    count /= 10U;
-  }
-  text[11] = '\0';
-}
-
-static bool OLED_ShowButtonTest(bool pressed, uint32_t press_count)
-{
-  char count_text[12];
-
-  FormatPressCount(count_text, press_count);
-  SSD1306_Fill(false);
-  OLED_DrawBorder();
-  SSD1306_DrawString(22U, 4U, "K4 BUTTON TEST", 1U);
-  SSD1306_DrawString(16U, 16U, "PA8 INPUT PULLUP", 1U);
-  SSD1306_DrawString(31U, 28U, "PA11 BUZZER", 1U);
-  SSD1306_DrawString(22U, 40U,
-                     pressed ? "STATE PRESSED" : "STATE RELEASED", 1U);
-  SSD1306_DrawString(31U, 52U, count_text, 1U);
-
-  if (!SSD1306_UpdateScreen())
-  {
-    return false;
-  }
-  return SSD1306_SetInvert(pressed);
-}
 
 /* USER CODE END 0 */
 
@@ -209,21 +100,15 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  /* USER CODE BEGIN 2 */
-  Button_TestPinsInit();
   MX_I2C1_Init();
-
-  bool stable_pressed =
-      HAL_GPIO_ReadPin(BUTTON_TEST_GPIO_PORT, BUTTON_TEST_PIN) == GPIO_PIN_RESET;
-  bool candidate_pressed = stable_pressed;
-  uint32_t candidate_since_ms = HAL_GetTick();
-  uint32_t press_count = 0U;
-
-  while (!SSD1306_Init(&hi2c1))
+  MX_TIM2_Init();
+  MX_USART1_UART_Init();
+  /* USER CODE BEGIN 2 */
+  StudyMate_Init(&hi2c1, &huart1);
+  if (HAL_TIM_Base_Start_IT(&htim2) != HAL_OK)
   {
-    HAL_Delay(500U);
+    Error_Handler();
   }
-  (void)OLED_ShowButtonTest(stable_pressed, press_count);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -233,29 +118,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    const uint32_t now = HAL_GetTick();
-    const bool raw_pressed =
-        HAL_GPIO_ReadPin(BUTTON_TEST_GPIO_PORT, BUTTON_TEST_PIN) == GPIO_PIN_RESET;
-
-    if (raw_pressed != candidate_pressed)
-    {
-      candidate_pressed = raw_pressed;
-      candidate_since_ms = now;
-    }
-
-    if (candidate_pressed != stable_pressed &&
-        (uint32_t)(now - candidate_since_ms) >= BUTTON_TEST_DEBOUNCE_MS)
-    {
-      stable_pressed = candidate_pressed;
-      if (stable_pressed)
-      {
-        ++press_count;
-        Buzzer_Beep(BUTTON_TEST_BEEP_MS);
-      }
-      (void)OLED_ShowButtonTest(stable_pressed, press_count);
-    }
-
-    HAL_Delay(BUTTON_TEST_POLL_MS);
+    StudyMate_Task();
+    HAL_Delay(1U);
   }
 
   /* USER CODE END 3 */
@@ -327,7 +191,8 @@ void MX_I2C1_Init(void)
 void MX_TIM2_Init(void)
 {
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 7199;
+  /* HSI is 8 MHz: 8 MHz / (799 + 1) / (99 + 1) = 100 Hz (10 ms). */
+  htim2.Init.Prescaler = 799;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim2.Init.Period = 99;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
@@ -386,11 +251,37 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(BUZZER_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
+  GPIO_InitStruct.Pin = BTN_MUTE_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(BTN_MUTE_GPIO_Port, &GPIO_InitStruct);
+
+  GPIO_InitStruct.Pin = BTN_START_Pin | BTN_MODE_Pin | BTN_RESET_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  HAL_NVIC_SetPriority(EXTI9_5_IRQn, 1U, 0U);
+  HAL_NVIC_EnableIRQ(EXTI9_5_IRQn);
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 1U, 0U);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  StudyMate_OnExti(GPIO_Pin);
+}
+
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if (htim->Instance == TIM2)
+  {
+    StudyMate_On10msTick();
+  }
+}
 
 /* USER CODE END 4 */
 
